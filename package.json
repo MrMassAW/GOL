@@ -1,1 +1,9 @@
-{"type":"module"}
+{
+  "name": "evolving-life",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.5.0",
+    "@vercel/blob": "^2.8.2"
+  }
+}

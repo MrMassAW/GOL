@@ -4,96 +4,89 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Evolving Life</title>
-<meta name="description" content="A Game of Life that rewrites itself every five minutes, without ever stopping.">
+<meta name="description" content="A Game of Life that Claude rewrites, live, every time someone presses Evolve.">
 <style>
-  :root { --bg:#0d0f14; --panel:#151922; --line:#262c38; --text:#e6e9ef; --muted:#8a93a6; --accent:#5fd38d; --warn:#f0b65a; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  :root { --bg:#0d0f14; --panel:#151922; --line:#262c38; --text:#e6e9ef; --muted:#8a93a6; --accent:#5fd38d; --ai:#b9a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
   header { display:flex; align-items:baseline; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
-  header h1 { font-size:17px; margin:0; letter-spacing:.2px; }
-  header a { color:var(--muted); text-decoration:none; margin-left:auto; }
-  header a:hover { color:var(--text); }
-  main { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; padding:16px; max-width:1400px; margin:0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  header h1 { font-size:17px; margin:0; }
+  header span { color:var(--muted); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; padding:16px; max-width:1440px; margin:0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns:1fr; } }
   .stage { position:relative; }
-  canvas { width:100%; aspect-ratio:128/80; image-rendering:pixelated; border:1px solid var(--line); border-radius:8px; background:#000; touch-action:none; cursor:crosshair; display:block; }
+  canvas { width:100%; aspect-ratio:128/80; border:1px solid var(--line); border-radius:8px; background:#000; touch-action:none; cursor:crosshair; display:block; image-rendering:pixelated; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:12px; }
+  h3 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:600; }
   .evo-n { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
   .evo-title { font-size:20px; font-weight:650; margin:2px 0 6px; }
-  .evo-desc { color:#c4cad6; }
+  .desc { color:#c4cad6; }
+  .btn { width:100%; padding:12px; border-radius:8px; border:1px solid #4b3f86; background:linear-gradient(180deg,#2b2350,#211b3d); color:#efeaff; font:650 15px system-ui,sans-serif; cursor:pointer; }
+  .btn:hover:not(:disabled) { background:#352b63; } .btn:disabled { opacity:.6; cursor:default; }
+  .status { color:var(--muted); font-size:13px; margin-top:8px; min-height:1.5em; }
+  .status.err { color:#f0a35a; }
+  .spin { display:inline-block; width:10px; height:10px; border:2px solid var(--ai); border-right-color:transparent; border-radius:50%; animation:s 1s linear infinite; margin-right:6px; vertical-align:-1px; }
+  @keyframes s { to { transform:rotate(360deg); } }
   .row { display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-bottom:1px dashed var(--line); }
-  .row:last-child { border-bottom:0; }
-  .row span:first-child { color:var(--muted); }
-  .row span:last-child { text-align:right; }
-  .count { font-variant-numeric:tabular-nums; font-size:24px; font-weight:650; }
-  .bar { height:8px; background:#0b0d12; border-radius:4px; overflow:hidden; margin-top:6px; }
-  .bar > div { height:100%; background:var(--accent); transition:width .3s; }
-  .tribes { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
-  .tribe { display:flex; align-items:center; gap:5px; font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted); }
-  .dot { width:10px; height:10px; border-radius:50%; }
-  .history li { margin-bottom:6px; color:#c4cad6; }
-  .history { padding-left:18px; margin:6px 0 0; }
-  .tag { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); margin-left:4px; }
-  .toast { position:absolute; left:50%; top:16px; transform:translateX(-50%); background:rgba(16,19,26,.94); border:1px solid var(--accent); border-radius:10px; padding:10px 14px; max-width:min(90%,520px); opacity:0; transition:opacity .5s; pointer-events:none; }
+  .row:last-child { border-bottom:0; } .row span:first-child { color:var(--muted); }
+  .hudItem + .hudItem { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+  .hudItem .src { font-size:11px; color:var(--muted); margin-bottom:4px; }
+  .toast { position:absolute; left:50%; top:14px; transform:translateX(-50%); background:rgba(16,19,26,.95); border:1px solid var(--ai); border-radius:10px; padding:10px 14px; max-width:min(90%,560px); opacity:0; transition:opacity .4s; pointer-events:none; }
   .toast.show { opacity:1; }
   .hint { color:var(--muted); font-size:12px; margin-top:8px; }
-  .win { color:var(--accent); } .lose { color:var(--warn); }
-  .btn { margin-top:10px; width:100%; padding:9px 12px; border-radius:8px; border:1px solid #2f6b4a; background:#173826; color:#d8f5e3; font:600 14px system-ui,sans-serif; cursor:pointer; }
-  .btn:hover { background:#1d4a31; } .btn:disabled { opacity:.5; cursor:default; }
-  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
-  .tab { background:none; border:1px solid var(--line); color:var(--muted); border-radius:16px; padding:4px 12px; font:13px system-ui,sans-serif; cursor:pointer; text-decoration:none; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+  .tab { background:none; border:1px solid var(--line); color:var(--muted); border-radius:16px; padding:4px 12px; font:13px system-ui,sans-serif; cursor:pointer; }
   .tab.on { color:var(--text); border-color:#3a4458; background:#1c2230; }
-  .scroll { max-height:420px; overflow:auto; }
-  .logItem { padding:10px 0; border-bottom:1px solid var(--line); } .logItem:last-child { border-bottom:0; }
-  .logItem p { margin:4px 0 0; color:#c4cad6; }
-  h3 { margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:600; }
+  .entry { display:grid; grid-template-columns:200px minmax(0,1fr); gap:14px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .entry:last-child { border-bottom:0; }
+  @media (max-width:640px) { .entry { grid-template-columns:1fr; } }
+  .entry img { width:100%; border-radius:6px; border:1px solid var(--line); image-rendering:pixelated; display:block; }
+  .entry .t { font-weight:650; font-size:16px; }
+  .obs { color:var(--ai); font-style:italic; margin-top:6px; }
+  .retired { opacity:.55; }
+  details { margin-top:6px; } summary { cursor:pointer; color:var(--muted); font-size:13px; }
+  pre { background:#0b0d12; border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; max-height:360px; font-size:12px; }
+  .notice { color:#f0a35a; font-size:12px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Evolving Life</h1>
-  <span style="color:var(--muted)">A Game of Life that rewrites itself every five minutes. It never stops.</span>
-  <a href="log.html">Evolution log &amp; observations →</a>
+  <span>It started as Conway's Game of Life. Every time someone presses Evolve, Claude looks at it and rewrites it, live, without stopping.</span>
 </header>
 <main>
-  <div class="stage">
-    <canvas id="c" width="128" height="80"></canvas>
-    <div class="toast" id="toast"></div>
-    <div class="hint">Draw on the board to plant green life. You are the green tribe. <span id="status"></span></div>
-    <div class="panel" style="margin-top:16px">
-      <div class="tabs"><button class="tab on" data-tab="log">Evolution log (<span id="logCount">0</span>)</button><button class="tab" data-tab="obs">Observations</button><a class="tab" href="log.html">Snapshots →</a></div>
-      <div id="fullLog" class="scroll"></div>
-      <div id="obsList" class="scroll" hidden></div>
+  <div>
+    <div class="stage">
+      <canvas id="c" width="768" height="480"></canvas>
+      <div class="toast" id="toast"></div>
+    </div>
+    <div class="hint">Draw on the board to plant life (evolutions may change what drawing does). <span id="notices" class="notice"></span></div>
+    <div class="panel" style="margin-top:14px">
+      <div class="tabs">
+        <button class="tab on" data-tab="log">Evolution log (<span id="count">0</span>)</button>
+        <button class="tab" data-tab="obs">Claude's observations</button>
+      </div>
+      <div id="log"></div>
+      <div id="obsList" hidden></div>
     </div>
   </div>
   <aside>
     <div class="panel">
+      <button class="btn" id="evolve">Evolve ✦</button>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="panel">
       <div class="evo-n" id="evoN">Evolution 0</div>
       <div class="evo-title" id="evoTitle">Conway's Game of Life</div>
-      <div class="evo-desc" id="evoDesc">The original rules: a cell is born with exactly 3 neighbours and survives with 2 or 3.</div>
-      <div class="hint">Next evolution in <span id="next" class="count" style="font-size:14px">–</span></div>
-      <button id="evolveNow" class="btn">Evolve now</button>
-      <div class="hint" id="ahead"></div>
+      <div class="desc" id="evoDesc">The original rules: a dead cell with exactly 3 live neighbours is born; a live cell with 2 or 3 survives.</div>
     </div>
-    <div class="panel" id="objPanel" hidden>
-      <h3>Objective</h3>
-      <div id="objText"></div>
-      <div id="objScore" class="count" style="margin-top:6px"></div>
-      <div class="tribes" id="tribes"></div>
-    </div>
-    <div class="panel" id="energyPanel" hidden>
-      <h3>Energy</h3>
-      <div class="bar"><div id="energy"></div></div>
-    </div>
+    <div class="panel" id="hudPanel" hidden><h3>Game</h3><div id="hud"></div></div>
     <div class="panel">
-      <h3>Genome</h3>
-      <div id="genome"></div>
+      <h3>World</h3>
       <div class="row"><span>Living cells</span><span id="pop">–</span></div>
       <div class="row"><span>Tick</span><span id="tick">–</span></div>
-    </div>
-    <div class="panel">
-      <h3>Recent evolutions</h3>
-      <ol class="history" id="history" reversed></ol>
+      <div class="row"><span>Base rule</span><span id="rule">–</span></div>
+      <div class="row"><span>Active evolutions</span><span id="active">0</span></div>
     </div>
   </aside>
 </main>

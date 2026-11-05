@@ -1,227 +1,166 @@
-// app.js — the shell. It never needs to change: it keeps the world alive, follows the
-// evolution clock, and hot-swaps the game's modules (core, evolutions, ui) whenever the
-// steward publishes a new version. The world is never reset; a broken module is rolled back.
+// app.js — the page shell. Keeps the world running, draws it, loads every evolution Claude
+// has written (and new ones as they appear, from any player), and sends the game to Claude
+// when someone presses Evolve. The world is never reset.
+import * as K from './engine.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c'), ctx = canvas.getContext('2d');
-const SAVE_KEY = 'evolving-life-world-v1';
+const CELL = canvas.width / K.W;
+const SAVE_KEY = 'evolving-life-ai-v1';
+const off = document.createElement('canvas'); off.width = K.W; off.height = K.H;
+const offCtx = off.getContext('2d'); const img = offCtx.createImageData(K.W, K.H);
 
-let M = null;          // { version, core, evo, ui }
-let manifest = null;
-let chain = null;      // evolution history + reference world (deterministic, shared by all players)
-let world = null;      // this player's world
-let appliedN = 0;      // last evolution applied to this player's world
-let catchingUp = false;
+const game = K.createGame();
+let evolutions = [];                 // records from the server, in order
+let evolving = false;
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const env = { toast: (m) => toast(esc(m)) };
 
-const fetchJSON = async (url) => { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error(url + ' ' + r.status); return r.json(); };
-const SKIP_KEY = 'evolving-life-skip-v1';
-// "Evolve now" lets a player run ahead of the shared clock. Evolutions are deterministic,
-// so what they see early is exactly what everyone else gets on schedule.
-let skip = 0;
-const clockN = () => Math.max(0, Math.floor((Date.now() - manifest.genesis) / manifest.periodMs));
-const nowN = () => clockN() + skip;
-function loadSkip() { try { const s = JSON.parse(localStorage.getItem(SKIP_KEY) || 'null'); skip = s && s.genesis === manifest.genesis ? s.skip : 0; } catch (e) { skip = 0; } }
-function evolveNow() {
-  if (catchingUp) return;
-  skip++; try { localStorage.setItem(SKIP_KEY, JSON.stringify({ genesis: manifest.genesis, skip })); } catch (e) {}
-  $('evolveNow').disabled = true; setTimeout(() => ($('evolveNow').disabled = false), 1500);
-  catchUp();
-}
+// ---------- world ----------
+try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); if (s) K.restore(game, s); else K.seed(game, 0.25); } catch (e) { K.seed(game, 0.25); }
+function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(K.serialize(game))); } catch (e) {} }
 
-async function loadModules(version) {
-  // /r/<version>/x.js is rewritten to /js/x.js by vercel.json, so each version gets fresh
-  // module URLs (including the modules' own relative imports) and nothing stale is reused.
-  const base = '/r/' + encodeURIComponent(version) + '/';
-  const [core, evo, ui] = await Promise.all([import(base + 'core.js'), import(base + 'evolutions.js'), import(base + 'ui.js')]);
-  return { version, core, evo, ui };
-}
-
-async function loadChain(mods) {
-  let json = null;
-  try { json = await fetchJSON('chain.json'); } catch (e) { /* no checkpoint yet: start from genesis */ }
-  return mods.evo.loadChain(json, manifest.seed);
-}
-
-// Advance the shared chain toward "now", one evolution per macrotask so play never stutters.
-function catchUp() {
-  if (catchingUp) return; catchingUp = true;
-  const go = () => {
-    try {
-      const target = nowN();
-      if (chain.upTo < target) { M.evo.advance(chain, manifest.seed); applyToWorld(); setTimeout(go, 0); return; }
-    } catch (e) { console.error('evolution failed', e); }
-    catchingUp = false;
-  };
-  go();
-}
-
-// Bring this player's world up to the chain, one evolution at a time.
-function applyToWorld() {
-  let last = null;
-  while (appliedN < chain.upTo) {
-    appliedN++;
-    const e = chain.entries[appliedN - 1];
-    try { M.evo.transition(world, appliedN, e.genome || genome(), manifest.seed); } catch (err) { console.error(err); }
-    last = e;
-  }
-  if (last && Date.now() - startedAt > 3000) toast(`<b>Evolution ${last.n}: ${last.title}</b><br>${last.desc}`);
-  refreshPanel();
-}
-
-function genome() { return chain.upTo ? chain.entries[chain.upTo - 1].genome : chain.genome; }
-
-// ---------- player world persistence ----------
-function save() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ n: appliedN, world: M.evo.packWorld(world), energy: world.energy, genesis: manifest.genesis })); } catch (e) {}
-}
-function restore() {
-  try {
-    const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
-    if (s && s.genesis === manifest.genesis) { const w = M.evo.unpackWorld(s.world); w.energy = s.energy ?? 100; return { world: w, n: s.n }; }
-  } catch (e) {}
-  return null;
-}
-function freshWorld() {
-  const w = M.core.makeWorld((Math.random() * 2 ** 32) >>> 0);
-  return w;
-}
-
-// ---------- the loop ----------
-let lastTick = 0, failures = 0, previous = null;
-function tick() {
-  const g = genome();
-  try {
-    M.core.step(world, g, manifest.seed);
-    failures = 0;
-  } catch (e) {
-    console.error('step failed', e);
-    if (previous && ++failures > 2) { M = previous; previous = null; status('A new version misbehaved and was rolled back. Play continues.'); }
-  }
-  setTimeout(tick, g.tickMs || 120);
+function loop() {
+  const t0 = performance.now();
+  try { K.step(game); } catch (e) { console.error(e); }
+  const ms = game.params.tickMs || 120;
+  setTimeout(loop, Math.max(0, ms - (performance.now() - t0)));
 }
 function frame() {
-  try { M.ui.render(ctx, world, genome(), M.core); } catch (e) { console.error(e); }
+  try {
+    const d = img.data;
+    for (let i = 0; i < K.N; i++) { const c = K.cellColor(game, i); const o = i * 4; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; }
+    offCtx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+    K.runDraw(game, ctx, CELL);
+  } catch (e) { console.error(e); }
   requestAnimationFrame(frame);
 }
 
-// ---------- hot reload ----------
-async function checkManifest() {
+// ---------- evolutions ----------
+function applyNew(list, announce) {
+  const retired = new Set(list.flatMap((r) => r.retire || []));
+  let latest = null;
+  for (const rec of list) {
+    if (game.mods.some((m) => m.n === rec.n)) continue;
+    if (retired.has(rec.n)) { game.mods.push({ n: rec.n, id: 'e' + rec.n, title: rec.title, active: false }); continue; }
+    K.applyMod(game, rec, env);
+    latest = rec;
+  }
+  for (const n of retired) K.disableMod(game, n, 'was retired');
+  evolutions = list;
+  if (latest && announce) toast(`<b>Evolution ${latest.n}: ${esc(latest.title)}</b><br>${esc(latest.description)}`);
+  renderLog();
+}
+async function poll(announce = true) {
   try {
-    const m = await fetchJSON('manifest.json');
-    if (m.version !== manifest.version) {
-      const mods = await loadModules(m.version);
-      const prevManifest = manifest;
-      manifest = { ...m, genesis: prevManifest.genesis, seed: prevManifest.seed }; // the clock never moves
-      const fresh = await loadChain(mods);
-      // validate the new modules on a copy of the world before trusting them
-      const test = mods.evo.unpackWorld(mods.evo.packWorld(world));
-      mods.core.step(test, fresh.upTo ? fresh.entries[fresh.upTo - 1].genome : fresh.genome, manifest.seed);
-      previous = M; M = mods;
-      if (fresh.upTo >= chain.upTo) {
-        chain = fresh;
-        if (appliedN > chain.upTo) appliedN = chain.upTo;
-      }
-      status(`Game updated to ${m.version} without a restart.`);
-      catchUp();
-    }
-  } catch (e) { console.warn('update check failed, staying on current version', e); }
+    const r = await fetch('/api/state', { cache: 'no-store' });
+    const s = await r.json();
+    if (!r.ok) throw new Error(s.error || r.status);
+    applyNew(s.evolutions || [], announce);
+    if (!evolving && s.evolving) setStatus('<span class="spin"></span>Someone pressed Evolve. Claude is working on it…');
+    $('evolve').disabled = evolving || !!s.evolving;
+  } catch (e) { console.warn('state poll failed', e); }
+}
+
+function snapshotPNG() {
+  const c = document.createElement('canvas'); c.width = 384; c.height = 240;
+  c.getContext('2d').drawImage(canvas, 0, 0, 384, 240);
+  return c.toDataURL('image/png');
+}
+function stats() {
+  let pop = 0; for (let i = 0; i < K.N; i++) pop += game.alive[i] ? 1 : 0;
+  const layers = Object.fromEntries(Object.entries(game.layers).map(([k, v]) => { let nz = 0, sum = 0; for (let i = 0; i < v.length; i++) if (v[i]) { nz++; sum += v[i]; } return [k, { nonZero: nz, mean: nz ? +(sum / nz).toFixed(2) : 0 }]; }));
+  return {
+    tick: game.tick, livingCells: pop, density: +(pop / K.N).toFixed(3), params: game.params, layers,
+    shared: JSON.stringify(game.data.__shared || {}).slice(0, 1500),
+    evolutions: game.mods.map((m) => ({ n: m.n, active: m.active, errors: m.errors || 0, lastError: m.lastError })),
+    hud: K.runHud(game).map((h) => h.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 300)),
+    notices: game.notices.slice(-5),
+  };
+}
+
+async function evolve() {
+  if (evolving) return;
+  evolving = true; $('evolve').disabled = true;
+  const t0 = Date.now();
+  const tick = () => { if (evolving) { setStatus(`<span class="spin"></span>Claude is looking at the game and writing evolution ${evolutions.length + 1}… ${Math.round((Date.now() - t0) / 1000)}s`); setTimeout(tick, 1000); } };
+  tick();
+  try {
+    const r = await fetch('/api/evolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snapshot: snapshotPNG(), stats: stats() }) });
+    const out = await r.json().catch(() => ({ error: 'The server returned an unreadable answer (' + r.status + ').' }));
+    if (!r.ok) throw new Error(out.error + (out.details ? ' ' + out.details.join(' ') : ''));
+    evolving = false;
+    applyNew(evolutions.concat([out.evolution]), true);
+    setStatus(`Done in ${Math.round((Date.now() - t0) / 1000)}s.`);
+  } catch (e) {
+    evolving = false;
+    setStatus(esc(e.message), true);
+  }
+  $('evolve').disabled = false;
+  poll(false);
 }
 
 // ---------- input ----------
-let drawing = false;
-function plant(ev) {
-  const rect = canvas.getBoundingClientRect();
-  const x = Math.floor((ev.clientX - rect.left) / rect.width * world.w), y = Math.floor((ev.clientY - rect.top) / rect.height * world.h);
-  const g = genome();
-  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-    if (Math.random() < 0.45) continue;
-    const xx = (x + dx + world.w) % world.w, yy = (y + dy + world.h) % world.h, i = yy * world.w + xx;
-    if (world.walls[i] || world.alive[i]) continue;
-    if (g.energy) { if (world.energy < 1) return; world.energy -= 1; }
-    world.alive[i] = 1; world.species[i] = 0; world.age[i] = 0;
-  }
+let down = false;
+function pointer(e, type) {
+  const r = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) / r.width * K.W), y = Math.floor((e.clientY - r.top) / r.height * K.H);
+  if (x < 0 || y < 0 || x >= K.W || y >= K.H) return;
+  const ev = { x, y, i: K.idx(x, y), type, buttons: e.buttons };
+  if (K.runPointer(game, ev)) return;
+  if (type !== 'up' && down) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (Math.random() < 0.55) game.alive[K.idx(x + dx, y + dy)] = 1;
 }
-canvas.addEventListener('pointerdown', (e) => { drawing = true; canvas.setPointerCapture(e.pointerId); plant(e); });
-canvas.addEventListener('pointermove', (e) => { if (drawing) plant(e); });
-canvas.addEventListener('pointerup', () => { drawing = false; });
-canvas.addEventListener('pointercancel', () => { drawing = false; });
+canvas.addEventListener('pointerdown', (e) => { down = true; canvas.setPointerCapture(e.pointerId); pointer(e, 'down'); });
+canvas.addEventListener('pointermove', (e) => pointer(e, 'move'));
+canvas.addEventListener('pointerup', (e) => { pointer(e, 'up'); down = false; });
+canvas.addEventListener('pointercancel', () => { down = false; });
 
-// ---------- panel ----------
+// ---------- panels ----------
 let toastTimer = 0;
 function toast(html) { const t = $('toast'); t.innerHTML = html; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 9000); }
-function status(s) { $('status').textContent = s; }
-const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function setStatus(html, err) { $('status').innerHTML = html; $('status').classList.toggle('err', !!err); }
 
-function refreshPanel() {
-  const n = chain.upTo, e = chain.entries[n - 1];
-  $('evoN').textContent = `Evolution ${n}` + (e ? (e.kind === 'self' ? ' · chosen by the game' : ' · written by Claude') : '');
-  if (e) { $('evoTitle').textContent = e.title; $('evoDesc').textContent = e.desc; }
-  $('history').innerHTML = chain.entries.slice(-6).reverse().map((x) => `<li value="${x.n}"><b>${esc(x.title)}</b>${x.kind === 'self' ? '<span class="tag">self</span>' : ''}</li>`).join('');
-  $('ahead').textContent = skip ? `You are ${skip} evolution${skip > 1 ? 's' : ''} ahead of the shared clock.` : '';
-  $('logCount').textContent = chain.entries.length;
-  $('fullLog').innerHTML = chain.entries.length ? chain.entries.slice().reverse().map((x) => `
-    <div class="logItem"><div class="evo-n">Evolution ${x.n} · ${x.kind === 'self' ? 'chosen by the game' : 'written by Claude'}${x.rescue ? ' · rescue genesis' : ''}</div>
-    <b>${esc(x.title)}</b><div class="evo-desc">${esc(x.desc)}</div>
-    ${x.genome ? `<div class="hint">Rule B${x.genome.birth.join('')}/S${x.genome.survive.join('')} · ${x.genome.species} tribe${x.genome.species > 1 ? 's' : ''} · ${x.genome.neigh}</div>` : ''}
-    ${x.considered && x.considered.length ? `<div class="hint">Considered: ${x.considered.map((c) => `${esc(c.title)} (${c.score})`).join(', ')}</div>` : ''}</div>`).join('')
-    : '<p class="hint">No evolutions yet. Press “Evolve now” to see the first one.</p>';
+function renderLog() {
+  $('count').textContent = evolutions.length;
+  const active = evolutions.filter((e) => game.mods.find((m) => m.n === e.n && m.active));
+  const cur = evolutions[evolutions.length - 1];
+  if (cur) { $('evoN').textContent = `Evolution ${cur.n} · written by Claude`; $('evoTitle').textContent = cur.title; $('evoDesc').textContent = cur.description; }
+  $('active').textContent = active.length;
+  const list = evolutions.slice().reverse();
+  $('log').innerHTML = list.length ? list.map((e) => {
+    const m = game.mods.find((x) => x.n === e.n);
+    return `<div class="entry ${m && !m.active ? 'retired' : ''}">
+      ${e.snapshot ? `<img loading="lazy" src="${esc(e.snapshot)}" alt="The game just before evolution ${e.n}">` : '<div></div>'}
+      <div><div class="evo-n">Evolution ${e.n} · ${new Date(e.createdAt).toLocaleString()}${m && !m.active ? ' · off' : ''}</div>
+      <div class="t">${esc(e.title)}</div><div class="desc">${esc(e.description)}</div>
+      <details><summary>Code Claude wrote</summary><pre>${esc(e.code)}</pre></details></div></div>`;
+  }).join('') : '<p class="hint">No evolutions yet. Each entry will show the game just before the change, what changed, and the code Claude wrote. Press Evolve to start.</p>';
+  $('obsList').innerHTML = list.length ? list.map((e) => `<div class="entry" style="grid-template-columns:1fr"><div><div class="evo-n">Before evolution ${e.n} · ${new Date(e.createdAt).toLocaleString()}</div><div class="obs">“${esc(e.observation)}”</div></div></div>`).join('') : '<p class="hint">Claude writes down what it sees each time it evolves the game.</p>';
 }
+for (const b of document.querySelectorAll('[data-tab]')) b.addEventListener('click', () => {
+  for (const x of document.querySelectorAll('[data-tab]')) x.classList.toggle('on', x === b);
+  $('log').hidden = b.dataset.tab !== 'log'; $('obsList').hidden = b.dataset.tab !== 'obs';
+});
 
 function hud() {
-  const g = genome();
-  const s = M.core.stats(world, g);
-  $('pop').textContent = s.pop.toLocaleString() + ` (${(s.density * 100).toFixed(1)}%)`;
-  $('tick').textContent = world.tick.toLocaleString();
-  $('genome').innerHTML = M.ui.describe(g, world).map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
-  const ms = manifest.genesis + (clockN() + 1) * manifest.periodMs - Date.now();
-  $('next').textContent = `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
-  const obj = g.objective && M.evo.OBJECTIVES[g.objective];
-  $('objPanel').hidden = !obj;
-  if (obj) {
-    $('objText').textContent = obj.text;
-    const won = obj.win(s);
-    $('objScore').innerHTML = `<span class="${won ? 'win' : 'lose'}">${esc(obj.score(s))}</span>`;
-    $('tribes').innerHTML = s.per.map((p, i) => { const c = M.core.palette(g).cell(i, 0); return `<span class="tribe"><span class="dot" style="background:rgb(${c})"></span>${p}</span>`; }).join('');
-  }
-  $('energyPanel').hidden = !g.energy;
-  if (g.energy) $('energy').style.width = world.energy + '%';
-}
-
-async function loadObservations() {
-  try {
-    const o = await fetchJSON('observations.json');
-    const md = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n\n/g, '</p><p>');
-    $('obsList').innerHTML = o.entries.length ? o.entries.slice().reverse().map((x) => `<div class="logItem"><div class="evo-n">${esc(x.date)}${x.upTo ? ' · through evolution ' + x.upTo : ''}</div><p>${md(x.text)}</p></div>`).join('') : '<p class="hint">No observations yet.</p>';
-  } catch (e) {}
+  let pop = 0; for (let i = 0; i < K.N; i++) pop += game.alive[i] ? 1 : 0;
+  $('pop').textContent = `${pop.toLocaleString()} (${(100 * pop / K.N).toFixed(1)}%)`;
+  $('tick').textContent = game.tick.toLocaleString();
+  $('rule').textContent = `B${game.params.birth.join('')}/S${game.params.survive.join('')}`;
+  const items = K.runHud(game);
+  $('hudPanel').hidden = !items.length;
+  $('hud').innerHTML = items.map((h) => `<div class="hudItem"><div class="src">${esc(h.title)}</div>${h.html}</div>`).join('');
+  $('notices').textContent = game.notices.slice(-2).join(' · ');
 }
 
 // ---------- boot ----------
-const startedAt = Date.now();
-(async function boot() {
-  manifest = await fetchJSON('manifest.json');
-  loadSkip();
-  $('evolveNow').addEventListener('click', evolveNow);
-  for (const b of document.querySelectorAll('[data-tab]')) b.addEventListener('click', () => {
-    for (const x of document.querySelectorAll('[data-tab]')) x.classList.toggle('on', x === b);
-    $('fullLog').hidden = b.dataset.tab !== 'log'; $('obsList').hidden = b.dataset.tab !== 'obs';
-  });
-  loadObservations(); setInterval(loadObservations, 300000);
-  M = await loadModules(manifest.version);
-  chain = await loadChain(M);
-  const saved = restore();
-  if (saved) { world = saved.world; appliedN = Math.min(saved.n, chain.upTo); }
-  else {
-    world = freshWorld(); appliedN = chain.upTo;
-    const g = genome();
-    if (g.species > 1) for (let i = 0; i < world.alive.length; i++) { const x = i % world.w, y = (i / world.w) | 0; world.species[i] = Math.floor(((Math.atan2(y - world.h / 2, x - world.w / 2) + Math.PI) / (2 * Math.PI)) * g.species) % g.species; }
-    M.core.reconcile(world, g);
-  }
-  applyToWorld();
-  catchUp();
-  tick(); frame();
-  setInterval(hud, 500); hud();
-  setInterval(catchUp, 5000);
-  setInterval(checkManifest, 60000);
-  setInterval(save, 10000);
-  addEventListener('pagehide', save);
-})();
+$('evolve').addEventListener('click', evolve);
+renderLog();
+loop(); frame();
+await poll(false);
+setInterval(() => poll(true), 15000);
+setInterval(hud, 500); hud();
+setInterval(save, 5000);
+addEventListener('pagehide', save);
