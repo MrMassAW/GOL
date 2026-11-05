@@ -1,0 +1,9 @@
+{
+  "cleanUrls": false,
+  "rewrites": [{ "source": "/r/:ver/:file", "destination": "/js/:file" }],
+  "headers": [
+    { "source": "/(manifest.json|chain.json|log.json|observations.json)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/(.*).js", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] },
+    { "source": "/r/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] }
+  ]
+}

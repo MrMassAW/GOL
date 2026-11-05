@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evolving Life</title>
+<meta name="description" content="A Game of Life that rewrites itself every five minutes, without ever stopping.">
+<style>
+  :root { --bg:#0d0f14; --panel:#151922; --line:#262c38; --text:#e6e9ef; --muted:#8a93a6; --accent:#5fd38d; --warn:#f0b65a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:baseline; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; letter-spacing:.2px; }
+  header a { color:var(--muted); text-decoration:none; margin-left:auto; }
+  header a:hover { color:var(--text); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; padding:16px; max-width:1400px; margin:0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  .stage { position:relative; }
+  canvas { width:100%; aspect-ratio:128/80; image-rendering:pixelated; border:1px solid var(--line); border-radius:8px; background:#000; touch-action:none; cursor:crosshair; display:block; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:12px; }
+  .evo-n { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+  .evo-title { font-size:20px; font-weight:650; margin:2px 0 6px; }
+  .evo-desc { color:#c4cad6; }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-bottom:1px dashed var(--line); }
+  .row:last-child { border-bottom:0; }
+  .row span:first-child { color:var(--muted); }
+  .row span:last-child { text-align:right; }
+  .count { font-variant-numeric:tabular-nums; font-size:24px; font-weight:650; }
+  .bar { height:8px; background:#0b0d12; border-radius:4px; overflow:hidden; margin-top:6px; }
+  .bar > div { height:100%; background:var(--accent); transition:width .3s; }
+  .tribes { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .tribe { display:flex; align-items:center; gap:5px; font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted); }
+  .dot { width:10px; height:10px; border-radius:50%; }
+  .history li { margin-bottom:6px; color:#c4cad6; }
+  .history { padding-left:18px; margin:6px 0 0; }
+  .tag { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); margin-left:4px; }
+  .toast { position:absolute; left:50%; top:16px; transform:translateX(-50%); background:rgba(16,19,26,.94); border:1px solid var(--accent); border-radius:10px; padding:10px 14px; max-width:min(90%,520px); opacity:0; transition:opacity .5s; pointer-events:none; }
+  .toast.show { opacity:1; }
+  .hint { color:var(--muted); font-size:12px; margin-top:8px; }
+  .win { color:var(--accent); } .lose { color:var(--warn); }
+  h3 { margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Evolving Life</h1>
+  <span style="color:var(--muted)">A Game of Life that rewrites itself every five minutes. It never stops.</span>
+  <a href="log.html">Evolution log &amp; observations →</a>
+</header>
+<main>
+  <div class="stage">
+    <canvas id="c" width="128" height="80"></canvas>
+    <div class="toast" id="toast"></div>
+    <div class="hint">Draw on the board to plant green life. You are the green tribe. <span id="status"></span></div>
+  </div>
+  <aside>
+    <div class="panel">
+      <div class="evo-n" id="evoN">Evolution 0</div>
+      <div class="evo-title" id="evoTitle">Conway's Game of Life</div>
+      <div class="evo-desc" id="evoDesc">The original rules: a cell is born with exactly 3 neighbours and survives with 2 or 3.</div>
+      <div class="hint">Next evolution in <span id="next" class="count" style="font-size:14px">–</span></div>
+    </div>
+    <div class="panel" id="objPanel" hidden>
+      <h3>Objective</h3>
+      <div id="objText"></div>
+      <div id="objScore" class="count" style="margin-top:6px"></div>
+      <div class="tribes" id="tribes"></div>
+    </div>
+    <div class="panel" id="energyPanel" hidden>
+      <h3>Energy</h3>
+      <div class="bar"><div id="energy"></div></div>
+    </div>
+    <div class="panel">
+      <h3>Genome</h3>
+      <div id="genome"></div>
+      <div class="row"><span>Living cells</span><span id="pop">–</span></div>
+      <div class="row"><span>Tick</span><span id="tick">–</span></div>
+    </div>
+    <div class="panel">
+      <h3>Recent evolutions</h3>
+      <ol class="history" id="history" reversed></ol>
+    </div>
+  </aside>
+</main>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
