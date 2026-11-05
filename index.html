@@ -38,6 +38,14 @@
   .toast.show { opacity:1; }
   .hint { color:var(--muted); font-size:12px; margin-top:8px; }
   .win { color:var(--accent); } .lose { color:var(--warn); }
+  .btn { margin-top:10px; width:100%; padding:9px 12px; border-radius:8px; border:1px solid #2f6b4a; background:#173826; color:#d8f5e3; font:600 14px system-ui,sans-serif; cursor:pointer; }
+  .btn:hover { background:#1d4a31; } .btn:disabled { opacity:.5; cursor:default; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tab { background:none; border:1px solid var(--line); color:var(--muted); border-radius:16px; padding:4px 12px; font:13px system-ui,sans-serif; cursor:pointer; text-decoration:none; }
+  .tab.on { color:var(--text); border-color:#3a4458; background:#1c2230; }
+  .scroll { max-height:420px; overflow:auto; }
+  .logItem { padding:10px 0; border-bottom:1px solid var(--line); } .logItem:last-child { border-bottom:0; }
+  .logItem p { margin:4px 0 0; color:#c4cad6; }
   h3 { margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:600; }
 </style>
 </head>
@@ -52,6 +60,11 @@
     <canvas id="c" width="128" height="80"></canvas>
     <div class="toast" id="toast"></div>
     <div class="hint">Draw on the board to plant green life. You are the green tribe. <span id="status"></span></div>
+    <div class="panel" style="margin-top:16px">
+      <div class="tabs"><button class="tab on" data-tab="log">Evolution log (<span id="logCount">0</span>)</button><button class="tab" data-tab="obs">Observations</button><a class="tab" href="log.html">Snapshots →</a></div>
+      <div id="fullLog" class="scroll"></div>
+      <div id="obsList" class="scroll" hidden></div>
+    </div>
   </div>
   <aside>
     <div class="panel">
@@ -59,6 +72,8 @@
       <div class="evo-title" id="evoTitle">Conway's Game of Life</div>
       <div class="evo-desc" id="evoDesc">The original rules: a cell is born with exactly 3 neighbours and survives with 2 or 3.</div>
       <div class="hint">Next evolution in <span id="next" class="count" style="font-size:14px">–</span></div>
+      <button id="evolveNow" class="btn">Evolve now</button>
+      <div class="hint" id="ahead"></div>
     </div>
     <div class="panel" id="objPanel" hidden>
       <h3>Objective</h3>

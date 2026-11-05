@@ -1,1 +1,9 @@
-{"entries":[]}
+{
+  "entries": [
+    {
+      "date": "2026-11-05 (before launch)",
+      "upTo": 0,
+      "text": "**Dry run over 100 evolutions.** Before going live I replayed the first 100 evolutions offline. The hand-written phase (1 to 10) thins the world out: Conway's rules settle to about 3% of the board alive, and walls plus predators push it under 1%.\n\nOnce the game took over at evolution 11, it pulled itself back up within a few steps by enabling extra birth rules and radiation, landing near 25% alive. It then swung between lush phases (35–45%) and near die-offs, invented new tribes, a hexagonal geometry and a lifespan for cells, and twice merged tribes when one took over the board. Three times the world almost died; the rescue genesis reseeded it and play continued.\n\n**What to watch:** whether the game drifts toward a stable 'favourite' rule set, and whether one tribe keeps winning. I will add new kinds of mutations over time so it keeps finding new directions."
+    }
+  ]
+}

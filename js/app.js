@@ -14,7 +14,19 @@ let appliedN = 0;      // last evolution applied to this player's world
 let catchingUp = false;
 
 const fetchJSON = async (url) => { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error(url + ' ' + r.status); return r.json(); };
-const nowN = () => Math.max(0, Math.floor((Date.now() - manifest.genesis) / manifest.periodMs));
+const SKIP_KEY = 'evolving-life-skip-v1';
+// "Evolve now" lets a player run ahead of the shared clock. Evolutions are deterministic,
+// so what they see early is exactly what everyone else gets on schedule.
+let skip = 0;
+const clockN = () => Math.max(0, Math.floor((Date.now() - manifest.genesis) / manifest.periodMs));
+const nowN = () => clockN() + skip;
+function loadSkip() { try { const s = JSON.parse(localStorage.getItem(SKIP_KEY) || 'null'); skip = s && s.genesis === manifest.genesis ? s.skip : 0; } catch (e) { skip = 0; } }
+function evolveNow() {
+  if (catchingUp) return;
+  skip++; try { localStorage.setItem(SKIP_KEY, JSON.stringify({ genesis: manifest.genesis, skip })); } catch (e) {}
+  $('evolveNow').disabled = true; setTimeout(() => ($('evolveNow').disabled = false), 1500);
+  catchUp();
+}
 
 async function loadModules(version) {
   // /r/<version>/x.js is rewritten to /js/x.js by vercel.json, so each version gets fresh
@@ -145,6 +157,14 @@ function refreshPanel() {
   $('evoN').textContent = `Evolution ${n}` + (e ? (e.kind === 'self' ? ' · chosen by the game' : ' · written by Claude') : '');
   if (e) { $('evoTitle').textContent = e.title; $('evoDesc').textContent = e.desc; }
   $('history').innerHTML = chain.entries.slice(-6).reverse().map((x) => `<li value="${x.n}"><b>${esc(x.title)}</b>${x.kind === 'self' ? '<span class="tag">self</span>' : ''}</li>`).join('');
+  $('ahead').textContent = skip ? `You are ${skip} evolution${skip > 1 ? 's' : ''} ahead of the shared clock.` : '';
+  $('logCount').textContent = chain.entries.length;
+  $('fullLog').innerHTML = chain.entries.length ? chain.entries.slice().reverse().map((x) => `
+    <div class="logItem"><div class="evo-n">Evolution ${x.n} · ${x.kind === 'self' ? 'chosen by the game' : 'written by Claude'}${x.rescue ? ' · rescue genesis' : ''}</div>
+    <b>${esc(x.title)}</b><div class="evo-desc">${esc(x.desc)}</div>
+    ${x.genome ? `<div class="hint">Rule B${x.genome.birth.join('')}/S${x.genome.survive.join('')} · ${x.genome.species} tribe${x.genome.species > 1 ? 's' : ''} · ${x.genome.neigh}</div>` : ''}
+    ${x.considered && x.considered.length ? `<div class="hint">Considered: ${x.considered.map((c) => `${esc(c.title)} (${c.score})`).join(', ')}</div>` : ''}</div>`).join('')
+    : '<p class="hint">No evolutions yet. Press “Evolve now” to see the first one.</p>';
 }
 
 function hud() {
@@ -153,7 +173,7 @@ function hud() {
   $('pop').textContent = s.pop.toLocaleString() + ` (${(s.density * 100).toFixed(1)}%)`;
   $('tick').textContent = world.tick.toLocaleString();
   $('genome').innerHTML = M.ui.describe(g, world).map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
-  const ms = manifest.genesis + (nowN() + 1) * manifest.periodMs - Date.now();
+  const ms = manifest.genesis + (clockN() + 1) * manifest.periodMs - Date.now();
   $('next').textContent = `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const obj = g.objective && M.evo.OBJECTIVES[g.objective];
   $('objPanel').hidden = !obj;
@@ -167,10 +187,25 @@ function hud() {
   if (g.energy) $('energy').style.width = world.energy + '%';
 }
 
+async function loadObservations() {
+  try {
+    const o = await fetchJSON('observations.json');
+    const md = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n\n/g, '</p><p>');
+    $('obsList').innerHTML = o.entries.length ? o.entries.slice().reverse().map((x) => `<div class="logItem"><div class="evo-n">${esc(x.date)}${x.upTo ? ' · through evolution ' + x.upTo : ''}</div><p>${md(x.text)}</p></div>`).join('') : '<p class="hint">No observations yet.</p>';
+  } catch (e) {}
+}
+
 // ---------- boot ----------
 const startedAt = Date.now();
 (async function boot() {
   manifest = await fetchJSON('manifest.json');
+  loadSkip();
+  $('evolveNow').addEventListener('click', evolveNow);
+  for (const b of document.querySelectorAll('[data-tab]')) b.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('[data-tab]')) x.classList.toggle('on', x === b);
+    $('fullLog').hidden = b.dataset.tab !== 'log'; $('obsList').hidden = b.dataset.tab !== 'obs';
+  });
+  loadObservations(); setInterval(loadObservations, 300000);
   M = await loadModules(manifest.version);
   chain = await loadChain(M);
   const saved = restore();
