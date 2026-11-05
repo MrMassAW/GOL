@@ -30,7 +30,11 @@ async function askClaude(client, messages) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not set on the server yet.' });
+  // The key comes from the server environment, or from the player's own browser (sent per
+  // request over HTTPS, used for this one call, never stored or logged).
+  const headerKey = String(req.headers['x-anthropic-key'] || '').trim();
+  const apiKey = process.env.ANTHROPIC_API_KEY || headerKey;
+  if (!apiKey) return res.status(401).json({ error: 'No Anthropic API key yet. Open the key panel and paste one.', needKey: true });
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const snapshot = typeof body.snapshot === 'string' ? body.snapshot.replace(/^data:image\/png;base64,/, '') : null;
   if (snapshot && snapshot.length > 3_000_000) return res.status(413).json({ error: 'snapshot too large' });
@@ -43,7 +47,7 @@ export default async function handler(req, res) {
   if (!lock) return res.status(409).json({ error: 'Claude is already evolving the game.' });
 
   try {
-    const client = new Anthropic();
+    const client = new Anthropic({ apiKey });
     const n = history.length + 1;
     const messages = [{ role: 'user', content: userContent({ history, snapshot, stats: body.stats }) }];
     let answer, out, t, attempt = 0;
@@ -75,7 +79,8 @@ export default async function handler(req, res) {
     res.status(200).json({ evolution: rec });
   } catch (e) {
     const status = e instanceof Anthropic.APIError ? (e.status || 502) : 500;
-    res.status(status).json({ error: String(e.message || e) });
+    const msg = e instanceof Anthropic.AuthenticationError ? 'That API key was rejected by Anthropic. Check it in the key panel.' : String(e.message || e);
+    res.status(status).json({ error: msg, needKey: e instanceof Anthropic.AuthenticationError });
   } finally {
     await releaseLock(lock);
   }

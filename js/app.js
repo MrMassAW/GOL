@@ -15,6 +15,14 @@ let evolutions = [];                 // records from the server, in order
 let evolving = false;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const env = { toast: (m) => toast(esc(m)) };
+const KEY_KEY = 'evolving-life-anthropic-key';
+let serverKey = false;
+const getKey = () => { try { return localStorage.getItem(KEY_KEY) || ''; } catch (e) { return ''; } };
+function refreshKeyUI() {
+  const k = getKey();
+  $('keySummary').textContent = serverKey ? 'API key: set on the server' : k ? `API key saved in this browser (…${k.slice(-4)})` : 'Add your Anthropic API key to evolve';
+  if (!serverKey && !k) $('keyPanel').open = true;
+}
 
 // ---------- world ----------
 try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); if (s) K.restore(game, s); else K.seed(game, 0.25); } catch (e) { K.seed(game, 0.25); }
@@ -58,6 +66,7 @@ async function poll(announce = true) {
     const r = await fetch('/api/state', { cache: 'no-store' });
     const s = await r.json();
     if (!r.ok) throw new Error(s.error || r.status);
+    serverKey = !!s.serverKey; refreshKeyUI();
     applyNew(s.evolutions || [], announce);
     if (!evolving && s.evolving) setStatus('<span class="spin"></span>Someone pressed Evolve. Claude is working on it…');
     $('evolve').disabled = evolving || !!s.evolving;
@@ -83,13 +92,15 @@ function stats() {
 
 async function evolve() {
   if (evolving) return;
+  if (!serverKey && !getKey()) { $('keyPanel').open = true; setStatus('Paste an Anthropic API key below first.', true); $('keyInput').focus(); return; }
   evolving = true; $('evolve').disabled = true;
   const t0 = Date.now();
   const tick = () => { if (evolving) { setStatus(`<span class="spin"></span>Claude is looking at the game and writing evolution ${evolutions.length + 1}… ${Math.round((Date.now() - t0) / 1000)}s`); setTimeout(tick, 1000); } };
   tick();
   try {
-    const r = await fetch('/api/evolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snapshot: snapshotPNG(), stats: stats() }) });
+    const r = await fetch('/api/evolve', { method: 'POST', headers: { 'content-type': 'application/json', ...(getKey() ? { 'x-anthropic-key': getKey() } : {}) }, body: JSON.stringify({ snapshot: snapshotPNG(), stats: stats() }) });
     const out = await r.json().catch(() => ({ error: 'The server returned an unreadable answer (' + r.status + ').' }));
+    if (out.needKey) $('keyPanel').open = true;
     if (!r.ok) throw new Error(out.error + (out.details ? ' ' + out.details.join(' ') : ''));
     evolving = false;
     applyNew(evolutions.concat([out.evolution]), true);
@@ -157,6 +168,14 @@ function hud() {
 
 // ---------- boot ----------
 $('evolve').addEventListener('click', evolve);
+$('keySave').addEventListener('click', () => {
+  const v = $('keyInput').value.trim();
+  if (!/^sk-ant-/.test(v)) { setStatus('That does not look like an Anthropic key (it should start with sk-ant-).', true); return; }
+  try { localStorage.setItem(KEY_KEY, v); } catch (e) {}
+  $('keyInput').value = ''; $('keyPanel').open = false; setStatus('Key saved in this browser. Press Evolve.'); refreshKeyUI();
+});
+$('keyClear').addEventListener('click', () => { try { localStorage.removeItem(KEY_KEY); } catch (e) {} setStatus('Key removed from this browser.'); refreshKeyUI(); });
+refreshKeyUI();
 renderLog();
 loop(); frame();
 await poll(false);

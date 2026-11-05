@@ -46,6 +46,13 @@
   .retired { opacity:.55; }
   details { margin-top:6px; } summary { cursor:pointer; color:var(--muted); font-size:13px; }
   pre { background:#0b0d12; border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; max-height:360px; font-size:12px; }
+  .keyPanel { margin-top:10px; border-top:1px solid var(--line); padding-top:8px; }
+  .keyPanel summary { font-size:13px; }
+  .keyPanel input { width:100%; padding:8px 10px; border-radius:6px; border:1px solid var(--line); background:#0b0d12; color:var(--text); font:13px ui-monospace,monospace; }
+  .keyPanel a { color:var(--ai); }
+  .keyRow { display:flex; gap:8px; margin-top:8px; }
+  .small { flex:1; padding:7px; border-radius:6px; border:1px solid #4b3f86; background:#2b2350; color:#efeaff; font:600 13px system-ui,sans-serif; cursor:pointer; }
+  .small.ghost { background:none; border-color:var(--line); color:var(--muted); }
   .notice { color:#f0a35a; font-size:12px; }
 </style>
 </head>
@@ -74,6 +81,12 @@
     <div class="panel">
       <button class="btn" id="evolve">Evolve ✦</button>
       <div class="status" id="status"></div>
+      <details id="keyPanel" class="keyPanel">
+        <summary id="keySummary">Anthropic API key</summary>
+        <p class="hint">Paste your key (starts with <code>sk-ant-</code>) from <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a>. It is saved only in this browser and sent over HTTPS with each Evolve request, never stored on the server. Other visitors need their own key to press Evolve, but they still see every evolution live.</p>
+        <input id="keyInput" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+        <div class="keyRow"><button id="keySave" class="small">Save key</button><button id="keyClear" class="small ghost">Remove</button></div>
+      </details>
     </div>
     <div class="panel">
       <div class="evo-n" id="evoN">Evolution 0</div>
