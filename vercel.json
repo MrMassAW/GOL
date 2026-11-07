@@ -1,6 +1,22 @@
 {
-  "functions": { "api/evolve.js": { "maxDuration": 300 } },
+  "functions": {
+    "api/evolve.js": {
+      "maxDuration": 300,
+      "includeFiles": "data/**"
+    },
+    "api/state.js": {
+      "includeFiles": "data/**"
+    }
+  },
   "headers": [
-    { "source": "/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] }
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    }
   ]
 }

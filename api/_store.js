@@ -1,6 +1,24 @@
 // Evolutions live in Vercel Blob as immutable files: evo/00001.json, evo/00002.json, ...
 // Snapshots: snap/00001.png. A lock file prevents two evolutions from being written at once.
 import { put, list, del } from '@vercel/blob';
+import { readFile } from 'node:fs/promises';
+
+// Free-plan Blob storage allows only a few thousand list() calls a month, so every read is
+// cached here and done with ONE list() call, and the evolutions already written are also kept
+// in the repo (data/evolutions.json) so the game keeps working even if Blob is unreachable.
+let seed = null;
+export async function seedEvolutions() {
+  if (!seed) { try { seed = JSON.parse(await readFile(new URL('../data/evolutions.json', import.meta.url), 'utf8')); } catch (e) { seed = []; } }
+  return seed;
+}
+let snap = { at: 0, blobs: null, err: null };
+const SNAP_MS = 60 * 1000;
+async function allBlobs(force) {
+  if (!force && snap.blobs && Date.now() - snap.at < SNAP_MS) return snap.blobs;
+  snap = { at: Date.now(), blobs: await listAll(''), err: null };
+  return snap.blobs;
+}
+export function invalidate() { snap.at = 0; }
 
 const cache = new Map(); // pathname -> record (records never change)
 const pad = (n) => String(n).padStart(5, '0');
@@ -11,17 +29,27 @@ async function listAll(prefix) {
   return out;
 }
 
-export async function loadEvolutions() {
-  const blobs = (await listAll('evo/')).filter((b) => b.pathname.endsWith('.json'));
-  const recs = await Promise.all(blobs.map(async (b) => {
-    if (cache.has(b.pathname)) return cache.get(b.pathname);
-    const r = await fetch(b.url); if (!r.ok) throw new Error('blob fetch ' + r.status);
-    const rec = await r.json(); cache.set(b.pathname, rec); return rec;
-  }));
-  recs.sort((a, b) => a.n - b.n);
+// Returns { evolutions, lock, storageOk, storageError }. Never throws.
+export async function loadState(force = false) {
+  const byN = new Map((await seedEvolutions()).map((r) => [r.n, r]));
+  let lock = null, storageOk = true, storageError = null;
+  try {
+    const blobs = await allBlobs(force);
+    const live = blobs.filter((b) => b.pathname.startsWith('lock/') && Date.now() - new Date(b.uploadedAt).getTime() < LOCK_MS);
+    lock = live[0] || null;
+    await Promise.all(blobs.filter((b) => b.pathname.startsWith('evo/') && b.pathname.endsWith('.json')).map(async (b) => {
+      try {
+        let rec = cache.get(b.pathname);
+        if (!rec) { const r = await fetch(b.url); if (!r.ok) throw new Error('blob fetch ' + r.status); rec = await r.json(); cache.set(b.pathname, rec); }
+        byN.set(rec.n, rec);
+      } catch (e) { storageOk = false; storageError = String(e.message || e); }
+    }));
+  } catch (e) { storageOk = false; storageError = String(e.message || e); }
+  const recs = [...byN.values()].sort((a, b) => a.n - b.n);
   const retired = new Set(recs.flatMap((r) => r.retire || []));
-  return recs.map((r) => ({ ...r, retired: retired.has(r.n) }));
+  return { evolutions: recs.map((r) => ({ ...r, retired: retired.has(r.n) })), lock, storageOk, storageError };
 }
+export async function loadEvolutions() { return (await loadState(true)).evolutions; }
 
 export async function saveEvolution(rec, pngBase64) {
   if (pngBase64) {
@@ -29,6 +57,7 @@ export async function saveEvolution(rec, pngBase64) {
     rec.snapshot = img.url;
   }
   await put(`evo/${pad(rec.n)}.json`, JSON.stringify(rec), { access: 'public', contentType: 'application/json', addRandomSuffix: false });
+  cache.set(`evo/${pad(rec.n)}.json`, rec); invalidate();
   return rec;
 }
 

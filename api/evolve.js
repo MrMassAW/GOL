@@ -4,7 +4,7 @@
 // The new code is test-run headless with the whole history before it is stored and served.
 import Anthropic from '@anthropic-ai/sdk';
 import { SYSTEM, userContent, parseAnswer } from './_prompt.js';
-import { loadEvolutions, saveEvolution, takeLock, releaseLock, currentLock } from './_store.js';
+import { loadState, saveEvolution, takeLock, releaseLock } from './_store.js';
 import { trial } from '../js/engine.js';
 
 const MODEL = 'claude-opus-5-5';
@@ -39,11 +39,14 @@ export default async function handler(req, res) {
   const snapshot = typeof body.snapshot === 'string' ? body.snapshot.replace(/^data:image\/png;base64,/, '') : null;
   if (snapshot && snapshot.length > 3_000_000) return res.status(413).json({ error: 'snapshot too large' });
 
-  if (await currentLock()) return res.status(409).json({ error: 'Claude is already evolving the game. The result will appear for everyone shortly.' });
-  const history = await loadEvolutions();
+  const st = await loadState(true);
+  if (!st.storageOk) return res.status(503).json({ error: 'Evolving is paused: the storage that keeps new evolutions is unavailable right now (' + st.storageError + '). The game keeps running with every evolution so far.' });
+  if (st.lock) return res.status(409).json({ error: 'Claude is already evolving the game. The result will appear for everyone shortly.' });
+  const history = st.evolutions;
   const last = history[history.length - 1];
   if (last && Date.now() - last.createdAt < COOLDOWN_MS) return res.status(429).json({ error: 'The game just evolved. Give it a moment to play out before evolving again.' });
-  const lock = await takeLock();
+  let lock;
+  try { lock = await takeLock(); } catch (e) { return res.status(503).json({ error: 'Evolving is paused: storage refused the write (' + String(e.message || e) + '). The game keeps running.' }); }
   if (!lock) return res.status(409).json({ error: 'Claude is already evolving the game.' });
 
   try {

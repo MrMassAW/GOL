@@ -1,12 +1,13 @@
 // GET /api/state — every evolution so far (code included), for pages to load and hot-swap.
-import { loadEvolutions, currentLock } from './_store.js';
+// Cached at the edge for 20 s so many open pages cost one storage read, not one each.
+import { loadState } from './_store.js';
 
 export default async function handler(req, res) {
-  try {
-    const [evolutions, lock] = await Promise.all([loadEvolutions(), currentLock()]);
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({ serverKey: !!process.env.ANTHROPIC_API_KEY, evolutions, evolving: lock ? new Date(lock.uploadedAt).getTime() : null, now: Date.now() });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
+  const s = await loadState();
+  res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=20, stale-while-revalidate=120');
+  res.status(200).json({
+    serverKey: !!process.env.ANTHROPIC_API_KEY, evolutions: s.evolutions,
+    evolving: s.lock ? new Date(s.lock.uploadedAt).getTime() : null,
+    storageOk: s.storageOk, now: Date.now(),
+  });
 }

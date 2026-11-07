@@ -63,11 +63,18 @@ function applyNew(list, announce) {
 }
 async function poll(announce = true) {
   try {
-    const r = await fetch('/api/state', { cache: 'no-store' });
-    const s = await r.json();
-    if (!r.ok) throw new Error(s.error || r.status);
+    let s;
+    try {
+      const r = await fetch('/api/state');
+      s = await r.json();
+      if (!r.ok || !Array.isArray(s.evolutions)) throw new Error(s.error || r.status);
+    } catch (e) {
+      // the server is unreachable: fall back to the evolutions kept in the site itself
+      const r = await fetch('/data/evolutions.json'); s = { evolutions: await r.json(), serverKey: serverKey, evolving: null, storageOk: false };
+    }
     serverKey = !!s.serverKey; refreshKeyUI();
     applyNew(s.evolutions || [], announce);
+    if (!evolving && s.storageOk === false) setStatus('Evolving is paused for now (storage is unavailable). The game keeps running with every evolution so far.', true);
     if (!evolving && s.evolving) setStatus('<span class="spin"></span>Someone pressed Evolve. Claude is working on it…');
     $('evolve').disabled = evolving || !!s.evolving;
   } catch (e) { console.warn('state poll failed', e); }
@@ -179,7 +186,7 @@ refreshKeyUI();
 renderLog();
 loop(); frame();
 await poll(false);
-setInterval(() => poll(true), 15000);
+setInterval(() => poll(true), 30000);
 setInterval(hud, 500); hud();
 setInterval(save, 5000);
 addEventListener('pagehide', save);
